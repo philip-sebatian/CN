@@ -7,75 +7,87 @@
 #define PORT 8080
 #define BUFFER_SIZE 1024
 
-void sendFile(int client_sock, char *filename) {
-    FILE *file = fopen(filename, "rb");
-    if (file == NULL) {
-        send(client_sock, "ERROR: File not found.", 22, 0);
-        return;
-    }
-    
-    send(client_sock, "OK", 2, 0);  // Send confirmation
+void handle_client(int client_socket) {
+char buffer[BUFFER_SIZE] = {0};
+char filename[BUFFER_SIZE] = {0};
 
-    char buffer[BUFFER_SIZE];
-    int bytes_read;
-    while ((bytes_read = fread(buffer, 1, BUFFER_SIZE, file)) > 0) {
-        send(client_sock, buffer, bytes_read, 0);
-    }
-    
-    fclose(file);
+// Receive filename from client
+
+int bytes_received = recv(client_socket, filename, BUFFER_SIZE, 0);
+if (bytes_received < 0) {
+perror("Error receiving filename");
+close(client_socket);
+return;
 }
 
-void receiveFile(int client_sock, char *filename) {
-    FILE *file = fopen(filename, "wb");
-    if (file == NULL) {
-        perror("File open error");
-        return;
-    }
+// Open the requested file
 
-    char buffer[BUFFER_SIZE];
-    int bytes_received;
-    
-    while ((bytes_received = recv(client_sock, buffer, BUFFER_SIZE, 0)) > 0) {
-        fwrite(buffer, 1, bytes_received, file);
-    }
+FILE *file = fopen(filename, "r");
+if (file == NULL) {
+char *error_message = "File not found";
+send(client_socket, error_message, strlen(error_message), 0);
+perror("File not found");
+} else {
 
-    fclose(file);
+// Read file and send its content
+
+while (fgets(buffer, BUFFER_SIZE, file) != NULL) {
+send(client_socket, buffer, strlen(buffer), 0);
+memset(buffer, 0, BUFFER_SIZE);
+}
+
+printf("File Send to client\n");
+fclose(file);
+}
+close(client_socket);
 }
 
 int main() {
-    int server_sock, client_sock;
-    struct sockaddr_in server_addr, client_addr;
-    socklen_t addr_size;
-    char command[BUFFER_SIZE], filename[BUFFER_SIZE];
 
-    server_sock = socket(AF_INET, SOCK_STREAM, 0);
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(PORT);
+int server_socket, client_socket;
+struct sockaddr_in server_addr, client_addr;
+socklen_t addr_len = sizeof(client_addr);
 
-    bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
-    listen(server_sock, 5);
+// Create server socket
 
-    printf("FTP Server started on port %d...\n", PORT);
+server_socket = socket(AF_INET, SOCK_STREAM, 0);
+if (server_socket == 0) {
+perror("Socket failed");
+exit(EXIT_FAILURE);
+}
 
-    while (1) {
-        addr_size = sizeof(client_addr);
-        client_sock = accept(server_sock, (struct sockaddr *)&client_addr, &addr_size);
-        printf("Client connected!\n");
+// Configure server address
+server_addr.sin_family = AF_INET;
+server_addr.sin_addr.s_addr = INADDR_ANY;
+server_addr.sin_port = htons(PORT);
 
-        recv(client_sock, command, BUFFER_SIZE, 0);
-        recv(client_sock, filename, BUFFER_SIZE, 0);
+// Bind socket to address
+if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+perror("Bind failed");
+exit(EXIT_FAILURE);
+}
 
-        if (strcmp(command, "GET") == 0) {
-            sendFile(client_sock, filename);
-        } else if (strcmp(command, "PUT") == 0) {
-            receiveFile(client_sock, filename);
-        }
+// Start listening
+if (listen(server_socket, 3) < 0) {
+perror("Listen failed");
+exit(EXIT_FAILURE);
+}
 
-        close(client_sock);
-        printf("Client disconnected.\n");
-    }
+printf("Server is listening on port %d\n", PORT);
+while (1) {
+// Accept client connection
+client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &addr_len);
+if (client_socket < 0) {
+perror("Accept failed");
+exit(EXIT_FAILURE);
+}
 
-    close(server_sock);
-    return 0;
+printf("Client connected\n");
+// Handle client
+
+handle_client(client_socket);
+}
+
+close(server_socket);
+return 0;
 }
